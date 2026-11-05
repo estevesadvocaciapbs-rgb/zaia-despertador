@@ -1,0 +1,43 @@
+name: Despertador da Za.Ia
+
+# Cada aviso (webhook) da Za.Ia chega aqui como repository_dispatch. O aviso só serve de despertador:
+# se o plantão do despachante não estiver rodando nem na fila, ele é religado na hora.
+# Criado em 05/11/2026, depois que o GitHub passou de 30/10 a 04/11 sem disparar os agendamentos.
+# Repositório público: NUNCA escrever no log o conteúdo do aviso (client_payload), que traz dados de cliente.
+on:
+  repository_dispatch:
+  workflow_dispatch:
+
+concurrency:
+  group: despertador
+  cancel-in-progress: true   # rajada de mensagens: basta a última conferir
+
+permissions: {}
+
+jobs:
+  acordar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Religar o plantão do despachante se estiver parado
+        env:
+          GH_TOKEN: ${{ secrets.DESPACHANTE_TOKEN }}
+          REPO: estevesadvocaciapbs-rgb/despachante-funil
+          EVENTO: ${{ github.event.action }}
+        run: |
+          case "$EVENTO" in *[!a-z_]*) EVENTO="(outro)";; esac
+          echo "aviso da Za.Ia: ${EVENTO:-manual}"
+          if [ -z "$GH_TOKEN" ]; then
+            echo "falta o segredo DESPACHANTE_TOKEN; nada a fazer"
+            exit 0
+          fi
+          ativos=0
+          for st in in_progress queued pending waiting requested; do
+            n=$(gh run list --repo "$REPO" --workflow despachante.yml --status "$st" --json databaseId --jq 'length')
+            ativos=$((ativos + n))
+          done
+          echo "plantões ativos ou na fila: $ativos"
+          if [ "$ativos" -eq 0 ]; then
+            gh workflow run despachante.yml --repo "$REPO" -f simulacao=false
+            echo "plantão religado"
+          fi
